@@ -1,0 +1,41 @@
+# -------------------------------
+# Core RAG + API Requirements
+# -------------------------------
+
+fastapi==0.115.2
+uvicorn==0.32.0
+
+# -------------------------------
+# Embeddings + NLP
+# -------------------------------
+sentence-transformers==3.1.1
+torch>=2.0.0
+numpy>=1.26.0
+scipy>=1.11.3
+
+# -------------------------------
+# Vector Search
+# -------------------------------
+faiss-cpu==1.8.0
+# (If you use GPU, replace with: faiss-gpu==1.8.0)
+
+# -------------------------------
+# JSON + Streaming Parsers
+# -------------------------------
+ijson==3.2.3
+
+# -------------------------------
+# Optional: Fuzzy Matching
+# -------------------------------
+rapidfuzz==3.10.0
+
+# -------------------------------
+# Utilities
+# -------------------------------
+pydantic>=2.7.0
+tqdm>=4.66.1
+
+# -------------------------------
+# Optional LLM Backends (Ollama CLI)
+# -------------------------------
+# Ollama is external, not a Python package — ensure it’s installed system-wide.
