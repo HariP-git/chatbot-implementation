@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 rag_hybrid_v5_gemini.py — Production Hybrid RAG API (FAISS + BM25 + RapidFuzz + E5)
-with Gemini-only Summary Generation and Auto Expansion.
+with Gemini-only Summary Generation and Persistent Response Logging.
 
 Features:
- - No hardcoded field mapping or expansions (fully metadata-driven)
- - Embedding-based concept expansion
+ - Fully metadata-driven (no hardcoded expansions)
+ - Embedding-based query expansion (E5)
  - FAISS + BM25 + fuzzy hybrid retrieval
- - Gemini for final summary (TinyLlama/Ollama removed)
- - Gemini responses logged to D:\chatbot\faiss_embedding\data\gemini_response.json
+ - Gemini for summary generation only
+ - Logs stored to D:\chatbot\faiss_embedding\data\gemini_response.json
 """
 
 import os, json, time, math, argparse, re
@@ -23,13 +23,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 from sentence_transformers import SentenceTransformer
+
 try:
     from sentence_transformers import CrossEncoder
     CROSS_ENCODER_AVAILABLE = True
 except Exception:
     CROSS_ENCODER_AVAILABLE = False
 
-# Fuzzy match
+# Fuzzy matching fallback
 try:
     from rapidfuzz import fuzz
     def fuzzy_partial(q, t): return fuzz.partial_ratio(q, t) / 100.0
@@ -165,7 +166,7 @@ class BM25Simple:
         return s
 
 # -----------------------------------------------------------
-# Build caches (keywords + concepts)
+# Caches (keywords + concepts)
 # -----------------------------------------------------------
 def build_field_keywords(sample_limit=300, min_len=3):
     if os.path.exists(FIELD_KEYWORDS_CACHE):
@@ -216,22 +217,6 @@ def build_field_emb():
 field_embs = build_field_emb()
 
 # -----------------------------------------------------------
-# Build BM25 per field
-# -----------------------------------------------------------
-def build_field_bm25():
-    bm25_map = {}
-    for field, entries in meta_map.items():
-        docs = []
-        for e in list(entries.values())[:500]:
-            toks = [t for t in safe_display(e).lower().split() if len(t) >= 2]
-            docs.append(toks)
-        if docs:
-            bm25_map[field] = BM25Simple(docs)
-    return bm25_map
-
-field_bm25_map = build_field_bm25()
-
-# -----------------------------------------------------------
 # Field relevance + expansion
 # -----------------------------------------------------------
 def select_fields(query):
@@ -259,7 +244,7 @@ def expand_query(query, top_n=6, sim_threshold=0.6):
     return query + " " + " ".join(adds)
 
 # -----------------------------------------------------------
-# FAISS Search
+# FAISS + hybrid retrieval
 # -----------------------------------------------------------
 def search_field(field, qv):
     idx = index_map.get(field)
@@ -285,16 +270,13 @@ def retrieve_hits(query, fields):
                 out[f] = hits
     return out
 
-# -----------------------------------------------------------
-# Hybrid scoring
-# -----------------------------------------------------------
 def hybrid_score(query, hits_by_field):
     results, recommendations = {}, {}
     for field, hits in hits_by_field.items():
         score_map = {}
         for disp, emb_score in hits:
-            bm25_score = fuzzy_partial(query, disp)
-            hybrid = WEIGHT_EMB * emb_score + WEIGHT_FUZZY * bm25_score
+            fuzzy_score = fuzzy_partial(query, disp)
+            hybrid = WEIGHT_EMB * emb_score + WEIGHT_FUZZY * fuzzy_score
             score_map[disp] = hybrid
         sorted_hits = sorted(score_map.items(), key=lambda x: -x[1])
         res = [d for d, s in sorted_hits if s >= HIGH_MATCH_SCORE]
@@ -310,7 +292,7 @@ def hybrid_score(query, hits_by_field):
     return results, recommendations
 
 # -----------------------------------------------------------
-# Gemini Summary
+# Gemini Integration
 # -----------------------------------------------------------
 def run_gemini(prompt: str):
     headers = {"Content-Type": "application/json"}
@@ -322,55 +304,52 @@ def run_gemini(prompt: str):
         data = resp.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
         dur = round(time.time() - start, 3)
-        log_gemini_response(prompt, text, dur)
         return text, dur
     except Exception as e:
-        dur = round(time.time() - start, 3)
-        log_gemini_response(prompt, f"ERROR: {str(e)}", dur)
-        return f"(Gemini summary unavailable)", dur
+        return f"(Gemini summary unavailable: {str(e)})", round(time.time() - start, 3)
 
-def log_gemini_response(prompt, response, duration):
-    entry = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "duration": duration,
-        "model": "Gemini Pro",
-        "prompt_preview": prompt[:200],
-        "response": response
-    }
+def log_gemini_response(entry):
     logs = []
     if os.path.exists(GEMINI_LOG_PATH):
         try:
             logs = json.load(open(GEMINI_LOG_PATH))
         except Exception:
-            pass
+            logs = []
     logs.append(entry)
     json.dump(logs[-1000:], open(GEMINI_LOG_PATH, "w"), indent=2)
 
 # -----------------------------------------------------------
-# Handler
+# Main Handler
 # -----------------------------------------------------------
 def handle_query(query: str, mode="fast"):
     t0 = time.time()
-    if mode == "high":
-        query = expand_query(query)
-    fields = select_fields(query)
-    hits = retrieve_hits(query, fields)
-    results, recommendations = hybrid_score(query, hits)
-    prompt = f"User Query:\n{query}\n\nResults:\n{json.dumps(results, indent=2)}\n\nSummarize briefly (25 words max)."
+    query_proc = expand_query(query) if mode == "high" else query
+    fields = select_fields(query_proc)
+    hits = retrieve_hits(query_proc, fields)
+    results, recommendations = hybrid_score(query_proc, hits)
+    prompt = f"User Query:\n{query}\n\nResults:\n{json.dumps(results, indent=2)}\n\nSummarize concisely in 25 words max."
     summary, llm_time = run_gemini(prompt)
-    total = round(time.time() - t0, 3)
-    return {
+    total_time = round(time.time() - t0, 3)
+
+    response = {
+        "query": query,
+        "mode": mode,
         "summary": summary,
         "results": results,
         "recommendations": recommendations,
-        "model_used": "E5 + BM25 + Gemini",
-        "execution_time_seconds": {"total": total, "llm": llm_time}
+        "model_used": "FAISS + BM25 + Gemini",
+        "execution_time_seconds": {"llm": llm_time, "total": total_time},
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
     }
+
+    # ✅ Store Gemini responses persistently
+    log_gemini_response(response)
+    return response
 
 # -----------------------------------------------------------
 # FASTAPI
 # -----------------------------------------------------------
-app = FastAPI(title="RAG Hybrid v5 Gemini")
+app = FastAPI(title="RAG Hybrid v5 (Gemini Only)")
 
 class QueryIn(BaseModel):
     query: str
@@ -384,15 +363,19 @@ async def query_api(req: QueryIn):
 
 @app.get("/")
 def root():
-    return {"message": "RAG Hybrid v5 (Gemini-only) running", "endpoints": ["/query (POST)"]}
+    return {"message": "RAG Hybrid v5 (Gemini-only) running", "endpoint": "/query (POST)"}
 
+# -----------------------------------------------------------
+# ENTRY
+# -----------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--query", type=str)
     parser.add_argument("--mode", type=str, default="fast")
     args = parser.parse_args()
+
     if args.query:
-        print(json.dumps(handle_query(args.query, args.mode), indent=2))
+        print(json.dumps(handle_query(args.query, args.mode), indent=2, ensure_ascii=False))
     elif args.serve:
         uvicorn.run(app, host="0.0.0.0", port=8000)
