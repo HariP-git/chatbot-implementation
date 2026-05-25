@@ -307,25 +307,9 @@ build_fieldwise_index()
 4. **Field Filtering**: Increase `FIELD_SIM_THRESHOLD` to search fewer fields
 5. **Smaller Models**: Use `e5-base-v2` or `e5-small-v2` for faster inference
 
-## Contributing 🤝
 
-Contributions are welcome! Please:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
-## License 📄
-
-This project is open source. See LICENSE file for details.
-
-## Author 👤
-
-**Hariprasath** - [GitHub Profile](https://github.com/HariP-git)
-
-## Support 💬
 
 For issues, questions, or suggestions, please open an [issue](https://github.com/HariP-git/Hariprasath-Infynd-chatbot/issues) on GitHub.
 
