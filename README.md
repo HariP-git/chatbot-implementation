@@ -1,4 +1,4 @@
-# Infynd-Chatbot 🤖
+# Chatbot 🤖
 
 A **Hybrid Retrieval-Augmented Generation (RAG)** chatbot API that combines FAISS vector search, BM25 lexical ranking, and fuzzy matching for intelligent document retrieval and LLM-powered summarization.
 
